@@ -4,60 +4,96 @@ on:
   repository_dispatch:
     types: [create-pr]
 
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
-  Create_pull_request:
-    runs-on: ubuntu-slim
-
+  create-pull-request:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v5
-      with:
-        fetch-depth: 0
+      - name: Validate dispatch and create branch/PR through GitHub API
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_BRANCH: ${{ github.event.client_payload.ReleaseBranchName }}
+          PR_BASE: ${{ github.event.client_payload.PullRequestBase }}
+          PR_TITLE: ${{ github.event.client_payload.PullRequestTitle }}
+          PR_BODY: ${{ github.event.client_payload.PullRequestBody }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = process.env.RELEASE_BRANCH || '';
+            const base = process.env.PR_BASE || '';
+            const title = process.env.PR_TITLE || '';
+            const body = process.env.PR_BODY || '';
 
-    - name: Clone release branch to create pull request
-      run: |
-        git checkout ${{ github.event.client_payload.ReleaseBranchName }}
-        git branch ${{ github.event.client_payload.ReleaseBranchName }}-docs
-        git push origin ${{ github.event.client_payload.ReleaseBranchName }}-docs --force
+            function validRefName(value) {
+              return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(value) &&
+                !value.includes('..') &&
+                !value.includes('//') &&
+                !value.includes('@{') &&
+                !value.endsWith('.') &&
+                !value.endsWith('/') &&
+                !value.endsWith('.lock');
+            }
 
-    - name: Create pull request for ${{ github.event.client_payload.ReleaseBranchName }}
-      id: create-pr
-      uses: actions/github-script@v8
-      with:
-        github-token: ${{secrets.GITHUB_TOKEN}}
-        script: |
-          const pulls = await github.rest.pulls.list({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            head: `${context.repo.owner}:${{ github.event.client_payload.ReleaseBranchName }}-docs`,
-            base: "${{ github.event.client_payload.PullRequestBase }}",
-            state: 'open'
-          });
+            if (!validRefName(branch) || !validRefName(base)) {
+              core.setFailed('Invalid repository_dispatch branch/base payload.');
+              return;
+            }
+            if (title.length === 0 || title.length > 256 || body.length > 65536) {
+              core.setFailed('Invalid repository_dispatch PR title/body size.');
+              return;
+            }
 
-          if (pulls.data.length > 0) {
-            console.log(`Pull request already exists: ${pulls.data[0].html_url}`);
-            return pulls.data[0].number;
-          } else {
-            console.log('No existing pull request found, creating new one');
-            let response = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: "${{ github.event.client_payload.PullRequestTitle }}",
-              head: "${{ github.event.client_payload.ReleaseBranchName }}-docs",
-              base: "${{ github.event.client_payload.PullRequestBase }}",
-              body: `${{ github.event.client_payload.PullRequestBody }}`
+            const docsBranch = `${branch}-docs`;
+            if (!validRefName(docsBranch)) {
+              core.setFailed('Derived docs branch is invalid.');
+              return;
+            }
+
+            const source = await github.rest.git.getRef({
+              owner,
+              repo,
+              ref: `heads/${branch}`
             });
-            return response.data.number;
-          }
 
-    - name: Request reviewers
-      uses: actions/github-script@v8
-      with:
-        github-token: ${{secrets.PRAPPROVAL_SECRET}}
-        script: |
-          github.rest.pulls.requestReviewers({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: ${{ steps.create-pr.outputs.result }},
-              team_reviewers: ['runner-images-team']
-          })
+            try {
+              await github.rest.git.getRef({owner, repo, ref: `heads/${docsBranch}`});
+              core.setFailed(`Ref ${docsBranch} already exists; refusing overwrite.`);
+              return;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+            await github.rest.git.createRef({
+              owner,
+              repo,
+              ref: `refs/heads/${docsBranch}`,
+              sha: source.data.object.sha
+            });
+
+            const pulls = await github.rest.pulls.list({
+              owner,
+              repo,
+              head: `${owner}:${docsBranch}`,
+              base,
+              state: 'open'
+            });
+            if (pulls.data.length > 0) {
+              core.info(`Pull request already exists: ${pulls.data[0].html_url}`);
+              return;
+            }
+
+            const response = await github.rest.pulls.create({
+              owner,
+              repo,
+              title,
+              head: docsBranch,
+              base,
+              body
+            });
+            core.info(`Created pull request: ${response.data.html_url}`);
