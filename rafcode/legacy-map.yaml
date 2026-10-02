@@ -54,10 +54,11 @@ layers:
   buffering_and_memory:
     state: REPLACE
     items:
-      - fifo
-      - queue
-      - lifo
-      - bounded_ring
+      - fifo_reference_only
+      - queue_reference_only
+      - lifo_reference_only
+      - overlap_field
+      - relation_fold
       - electronic_address_remap
       - latency_accounting
       - page_fault_reference_only
@@ -137,5 +138,9 @@ rules:
   proprietary_rom_payloads: QUARANTINE
   unknown_license: TOKEN_VAZIO
   unknown_source: TOKEN_VAZIO
+  third_party_code_as_cleanroom_template: QUARANTINE
   implementation_without_execution: IMPLEMENTED_UNTESTED
   pass_requires_evidence: true
+  crc_match_is_trust: false
+  fifo_is_core_primitive: false
+  novelty_without_prior_art_review: TOKEN_VAZIO
