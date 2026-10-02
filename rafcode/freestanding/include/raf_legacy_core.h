@@ -23,7 +23,8 @@ enum raf_status {
     RAF_ERR_FULL = -2,
     RAF_ERR_EMPTY = -3,
     RAF_ERR_RANGE = -4,
-    RAF_ERR_OVERFLOW = -5
+    RAF_ERR_OVERFLOW = -5,
+    RAF_ERR_STATE = -6
 };
 
 enum raf_event_kind {
@@ -37,12 +38,13 @@ enum raf_event_kind {
     RAF_EVENT_CONTROL = 7
 };
 
+#define RAF_EVENT_KIND_MAX RAF_EVENT_CONTROL
+
 struct raf_event {
     raf_u32 kind;
     raf_u32 source;
     raf_u32 target;
     raf_u32 code;
-    raf_u32 flags;
     raf_u64 value;
 };
 
@@ -58,12 +60,14 @@ struct raf_addr_map {
     raf_u64 legacy_base;
     raf_u64 modern_base;
     raf_u64 span;
-    raf_u32 flags;
 };
 
+raf_i32 raf_event_validate(const struct raf_event *event);
+raf_i32 raf_ring_validate(const struct raf_ring *ring);
 raf_i32 raf_ring_init(struct raf_ring *ring, struct raf_event *cells, raf_u32 capacity);
 raf_i32 raf_ring_push(struct raf_ring *ring, const struct raf_event *event);
 raf_i32 raf_ring_pop(struct raf_ring *ring, struct raf_event *event_out);
+raf_i32 raf_addr_map_validate(const struct raf_addr_map *map);
 raf_i32 raf_addr_translate(const struct raf_addr_map *map, raf_u64 legacy_addr, raf_u64 *modern_addr_out);
 
 #endif
