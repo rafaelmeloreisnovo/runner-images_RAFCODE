@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: 2026 Rafael Melo Reis
+# SPDX-License-Identifier: MIT
+
+schema: rafcode.legacy-map/v1
+states:
+  - PRESERVE_DOC
+  - MODEL
+  - EMULATE
+  - REPLACE
+  - QUARANTINE
+  - REMOVE_CANDIDATE
+  - TOKEN_VAZIO
+
+layers:
+  physical:
+    state: MODEL
+    items:
+      - diode
+      - transistor_bjt_base_collector_emitter
+      - capacitor
+      - inductor_coil
+      - transformer
+      - semiconductor_materials_and_doping
+  digital_logic:
+    state: MODEL
+    items:
+      - ttl
+      - latch
+      - flip_flop
+      - register
+      - counter
+      - finite_state_machine
+      - eprom
+      - rom
+      - ram
+  machine_interconnect:
+    state: EMULATE
+    items:
+      - isa
+      - pci
+      - pcie
+      - pcie_lanes
+      - ide
+      - ata
+      - pata
+      - sata
+      - usb
+      - irq
+      - dma
+      - serial_db9_db25
+      - parallel_lpt
+      - chipset_northbridge_southbridge
+      - slot_and_pinout_metadata
+  buffering_and_memory:
+    state: REPLACE
+    items:
+      - fifo
+      - queue
+      - lifo
+      - bounded_ring
+      - electronic_address_remap
+      - latency_accounting
+      - page_fault_reference_only
+      - slc_mlc_storage_semantics
+  firmware_boot:
+    state: MODEL
+    items:
+      - bios_interface
+      - rom_interface
+      - boot_sequence
+      - mbr_structure
+      - ramdisk_concept
+  filesystems:
+    state: PRESERVE_DOC
+    items:
+      - fat
+      - fat32
+      - ntfs
+      - ext_family
+      - fdisk_class
+      - diskpart_class
+      - defrag_class
+      - chkdsk_class
+  dos_command_runtime:
+    state: PRESERVE_DOC
+    items:
+      - autoexec_bat
+      - config_sys
+      - io_sys
+      - msdos_sys
+      - ibmdos
+      - command_com
+      - debug_com
+      - qbasic
+      - doskey
+      - tree
+      - attrib
+      - choice
+      - copy_con
+      - errorlevel_if_goto
+      - memmaker
+      - nbtstat
+      - lmhosts_sample
+      - net_use
+      - nslookup
+  toolchain:
+    state: REPLACE
+    items:
+      - assembler
+      - compiler
+      - linker
+      - preprocessor
+      - debugger
+      - runtime_observer
+      - rom_interface_emulator
+  legacy_networking:
+    state: MODEL
+    items:
+      - ipx_spx
+      - bnc_coax_topology
+      - token_ring_style_topology
+      - serial_at_command_state_machine
+  offensive_or_unsafe_legacy:
+    state: QUARANTINE
+    execution_allowed: false
+    items:
+      - credential_sniffing
+      - spoofing
+      - traffic_flooding
+      - ping_nuke_style_dos
+      - wireless_key_cracking
+      - fake_phone_impersonation
+      - botnet_control
+      - backdoor_persistence
+
+rules:
+  proprietary_rom_payloads: QUARANTINE
+  unknown_license: TOKEN_VAZIO
+  unknown_source: TOKEN_VAZIO
+  implementation_without_execution: IMPLEMENTED_UNTESTED
+  pass_requires_evidence: true
