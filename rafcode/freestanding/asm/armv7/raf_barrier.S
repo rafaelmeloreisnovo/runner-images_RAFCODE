@@ -10,3 +10,4 @@ raf_arch_memory_barrier:
     dmb sy
     bx lr
 .size raf_arch_memory_barrier, .-raf_arch_memory_barrier
+.section .note.GNU-stack,"",%progbits
