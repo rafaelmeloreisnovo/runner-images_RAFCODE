@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: 2026 Rafael Melo Reis
+# SPDX-License-Identifier: MIT
+
+name: RAFCODE freestanding core
+
+on:
+  pull_request:
+    paths:
+      - "rafcode/**"
+      - ".github/workflows/rafcode-freestanding.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "rafcode/**"
+      - ".github/workflows/rafcode-freestanding.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile generic core as freestanding C
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rafcode
+          clang \
+            -std=c11 \
+            -ffreestanding \
+            -fno-builtin \
+            -Wall -Wextra -Werror -pedantic \
+            -I rafcode/freestanding/include \
+            -c rafcode/freestanding/src/raf_legacy_core.c \
+            -o /tmp/rafcode/raf_legacy_core.host.o
+
+      - name: Hosted smoke test of generic logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang \
+            -std=c11 \
+            -Wall -Wextra -Werror -pedantic \
+            -I rafcode/freestanding/include \
+            rafcode/freestanding/src/raf_legacy_core.c \
+            rafcode/freestanding/tests/hosted_smoke.c \
+            -o /tmp/rafcode/hosted_smoke
+          /tmp/rafcode/hosted_smoke
+
+      - name: Cross-compile generic core for ARMv7
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang \
+            --target=armv7-none-eabi \
+            -march=armv7-a \
+            -std=c11 \
+            -ffreestanding \
+            -fno-builtin \
+            -nostdlibinc \
+            -Wall -Wextra -Werror -pedantic \
+            -I rafcode/freestanding/include \
+            -c rafcode/freestanding/src/raf_legacy_core.c \
+            -o /tmp/rafcode/raf_legacy_core.armv7.o
+
+      - name: Cross-compile generic core for AArch64
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang \
+            --target=aarch64-none-elf \
+            -std=c11 \
+            -ffreestanding \
+            -fno-builtin \
+            -nostdlibinc \
+            -Wall -Wextra -Werror -pedantic \
+            -I rafcode/freestanding/include \
+            -c rafcode/freestanding/src/raf_legacy_core.c \
+            -o /tmp/rafcode/raf_legacy_core.aarch64.o
+
+      - name: Assemble architecture memory barriers
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang --target=x86_64-none-elf \
+            -c rafcode/freestanding/asm/x86_64/raf_barrier.S \
+            -o /tmp/rafcode/raf_barrier.x86_64.o
+          clang --target=armv7-none-eabi -march=armv7-a \
+            -c rafcode/freestanding/asm/armv7/raf_barrier.S \
+            -o /tmp/rafcode/raf_barrier.armv7.o
+          clang --target=aarch64-none-elf \
+            -c rafcode/freestanding/asm/aarch64/raf_barrier.S \
+            -o /tmp/rafcode/raf_barrier.aarch64.o
+          file /tmp/rafcode/*.o
