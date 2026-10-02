@@ -9,3 +9,4 @@ raf_arch_memory_barrier:
     mfence
     ret
 .size raf_arch_memory_barrier, .-raf_arch_memory_barrier
+.section .note.GNU-stack,"",@progbits
