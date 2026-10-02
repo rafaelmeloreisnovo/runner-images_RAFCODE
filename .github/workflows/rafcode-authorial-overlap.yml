@@ -1,0 +1,45 @@
+name: RAFCODE authorial overlap core
+
+on:
+  pull_request:
+    paths:
+      - 'rafcode/authorial/**'
+      - '.github/workflows/rafcode-authorial-overlap.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'rafcode/authorial/**'
+      - '.github/workflows/rafcode-authorial-overlap.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile freestanding core
+        run: |
+          clang -std=c11 -ffreestanding -fno-builtin -Wall -Wextra -Werror -pedantic \
+            -Irafcode/authorial/include \
+            -c rafcode/authorial/src/raf_overlap_core.c \
+            -o /tmp/raf_overlap_core.o
+      - name: Hosted invariant smoke test
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -pedantic \
+            -Irafcode/authorial/include \
+            rafcode/authorial/src/raf_overlap_core.c \
+            rafcode/authorial/tests/hosted_overlap_smoke.c \
+            -o /tmp/raf_overlap_smoke
+          /tmp/raf_overlap_smoke
+      - name: Cross compile ARMv7
+        run: |
+          clang --target=armv7-none-eabi -march=armv7-a -std=c11 -ffreestanding -fno-builtin -nostdlibinc \
+            -Wall -Wextra -Werror -pedantic -Irafcode/authorial/include \
+            -c rafcode/authorial/src/raf_overlap_core.c -o /tmp/raf_overlap_armv7.o
+      - name: Cross compile AArch64
+        run: |
+          clang --target=aarch64-none-elf -std=c11 -ffreestanding -fno-builtin -nostdlibinc \
+            -Wall -Wextra -Werror -pedantic -Irafcode/authorial/include \
+            -c rafcode/authorial/src/raf_overlap_core.c -o /tmp/raf_overlap_aarch64.o
