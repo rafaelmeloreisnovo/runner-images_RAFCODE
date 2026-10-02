@@ -6,6 +6,9 @@ on:
       image_type:
         required: true
         type: string
+    secrets:
+      CI_PR_TOKEN:
+        required: true
 
 defaults:
   run:
@@ -13,29 +16,47 @@ defaults:
 
 jobs:
   trigger-workflow:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       ci_workflow_run_id: ${{ steps.resolve.outputs.ci_workflow_run_id }}
       ci_workflow_run_url: ${{ steps.resolve.outputs.ci_workflow_run_url }}
     env:
-      CI_PR_TOKEN: ${{ secrets.CI_PR_TOKEN }}
       PR_TITLE: ${{ github.event.pull_request.title }}
       CI_REPO: ${{ vars.CI_REPO }}
+      IMAGE_TYPE: ${{ inputs.image_type }}
+      CUSTOM_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      CUSTOM_REPO_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Trigger Build workflow
+        env:
+          CI_PR_TOKEN: ${{ secrets.CI_PR_TOKEN }}
         run: |
+          if ($env:IMAGE_TYPE -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+            throw "Invalid image_type"
+          }
+          if ($env:CUSTOM_REPO -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+            throw "Invalid pull-request repository"
+          }
+          if ($env:CUSTOM_REPO_SHA -notmatch '^[0-9A-Fa-f]{40}$') {
+            throw "Invalid pull-request head SHA"
+          }
+
           Import-Module ./helpers/GitHubApi.psm1
           $gitHubApi = Get-GithubApi -Repository "${env:CI_REPO}" -AccessToken "${env:CI_PR_TOKEN}"
 
-          $eventType = "trigger-${{ inputs.image_type }}-build"
+          $eventType = "trigger-$($env:IMAGE_TYPE)-build"
           [string] $prGuid = New-Guid
           $clientPayload = @{
               pr_title                = "${env:PR_TITLE} - " + $prGuid
-              custom_repo             = "${{ github.event.pull_request.head.repo.full_name }}"
-              custom_repo_commit_hash = "${{ github.event.pull_request.head.sha }}"
+              custom_repo             = $env:CUSTOM_REPO
+              custom_repo_commit_hash = $env:CUSTOM_REPO_SHA
           }
 
           $gitHubApi.DispatchWorkflow($eventType, $clientPayload)
@@ -43,77 +64,94 @@ jobs:
 
       - name: Resolve Workflow Run ID
         id: resolve
+        env:
+          CI_PR_TOKEN: ${{ secrets.CI_PR_TOKEN }}
         run: |
           Import-Module ./helpers/GitHubApi.psm1
           $gitHubApi = Get-GithubApi -Repository "${env:CI_REPO}" -AccessToken "${env:CI_PR_TOKEN}"
 
-          $workflowFileName = $("{0}.yml" -f "${{ inputs.image_type }}").ToLower()
+          $workflowFileName = $("{0}.yml" -f $env:IMAGE_TYPE).ToLower()
           $WorkflowSearchPattern = "${env:PR_GUID}"
 
-          # It might take a few minutes for the action to start
           $attempt = 1
           do {
-            $workflowRuns = $gitHubApi.GetWorkflowRuns($WorkflowFileName).workflow_runs
+            $workflowRuns = $gitHubApi.GetWorkflowRuns($workflowFileName).workflow_runs
             $workflowRunId = ($workflowRuns | Where-Object {$_.display_title -match $WorkflowSearchPattern}).id | Select-Object -First 1
 
             if (-not ([string]::IsNullOrEmpty($workflowRunId))) {
               $workflowRun = $gitHubApi.GetWorkflowRun($workflowRunId)
-              Write-Host "Found the workflow run with ID $workflowRunId on attempt $attempt. Workflow run link: $($workflowRun.html_url)"
+              Write-Host "Found workflow run ID $workflowRunId on attempt $attempt."
               "ci_workflow_run_id=$workflowRunId" | Out-File -Append -FilePath $env:GITHUB_OUTPUT
               "ci_workflow_run_url=$($workflowRun.html_url)" | Out-File -Append -FilePath $env:GITHUB_OUTPUT
               break
             }
 
-            Write-Host "Workflow run for $WorkflowSearchPattern pattern not found on attempt $attempt."
+            Write-Host "Workflow run not found on attempt $attempt."
             $attempt += 1
             Start-Sleep 30
           } until ($attempt -eq 10)
 
           if ([string]::IsNullOrEmpty($workflowRunId)) {
-              throw "Failed to find a workflow run for '$WorkflowSearchPattern'."
+              throw "Failed to find dispatched workflow run."
           }
 
   wait-completion:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     needs: trigger-workflow
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Wait for workflow completion
         env:
           CI_PR_TOKEN: ${{ secrets.CI_PR_TOKEN }}
           CI_REPO: ${{ vars.CI_REPO }}
+          CI_WORKFLOW_RUN_ID: ${{ needs.trigger-workflow.outputs.ci_workflow_run_id }}
         run: |
+          if ($env:CI_WORKFLOW_RUN_ID -notmatch '^[0-9]+$') {
+            throw "Invalid workflow run ID"
+          }
           ./helpers/WaitWorkflowCompletion.ps1 `
-            -WorkflowRunId "${{ needs.trigger-workflow.outputs.ci_workflow_run_id }}" `
+            -WorkflowRunId $env:CI_WORKFLOW_RUN_ID `
             -Repository "${env:CI_REPO}" `
             -AccessToken "${env:CI_PR_TOKEN}"
 
       - name: Add Summary
         if: always()
+        env:
+          CI_WORKFLOW_RUN_URL: ${{ needs.trigger-workflow.outputs.ci_workflow_run_url }}
         run: |
           "# Test Partner Image" >> $env:GITHUB_STEP_SUMMARY
           "| Key | Value |" >> $env:GITHUB_STEP_SUMMARY
           "| :-----------: | :--------: |" >> $env:GITHUB_STEP_SUMMARY
-          "| Workflow Run | [Link](${{ needs.trigger-workflow.outputs.ci_workflow_run_url }}) |" >> $env:GITHUB_STEP_SUMMARY
+          "| Workflow Run | $env:CI_WORKFLOW_RUN_URL |" >> $env:GITHUB_STEP_SUMMARY
           "| Workflow Result | $env:CI_WORKFLOW_RUN_RESULT |" >> $env:GITHUB_STEP_SUMMARY
-          "  " >> $env:GITHUB_STEP_SUMMARY
 
   cancel-workflow:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     needs: [trigger-workflow, wait-completion]
     if: cancelled()
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Cancel workflow
         env:
           CI_PR_TOKEN: ${{ secrets.CI_PR_TOKEN }}
           CI_REPO: ${{ vars.CI_REPO }}
+          CI_WORKFLOW_RUN_ID: ${{ needs.trigger-workflow.outputs.ci_workflow_run_id }}
         run: |
+          if ($env:CI_WORKFLOW_RUN_ID -notmatch '^[0-9]+$') {
+            throw "Invalid workflow run ID"
+          }
           Import-Module ./helpers/GitHubApi.psm1
-
           $gitHubApi = Get-GithubApi -Repository "${env:CI_REPO}" -AccessToken "${env:CI_PR_TOKEN}"
-          $gitHubApi.CancelWorkflowRun("${{ needs.trigger-workflow.outputs.ci_workflow_run_id }}")
+          $gitHubApi.CancelWorkflowRun($env:CI_WORKFLOW_RUN_ID)
