@@ -4,45 +4,99 @@ on:
   repository_dispatch:
     types: [merge-pr]
 
+permissions:
+  checks: read
+  contents: write
+  pull-requests: write
 
 jobs:
-  Merge_pull_request:
-    runs-on: ubuntu-slim
-
+  merge-pull-request:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v5
-      with:
-        fetch-depth: 0
+      - name: Validate reviewed head and merge through GitHub API
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ github.event.client_payload.PullRequestNumber }}
+          EXPECTED_HEAD_SHA: ${{ github.event.client_payload.ExpectedHeadSha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number(process.env.PR_NUMBER);
+            const expectedHead = (process.env.EXPECTED_HEAD_SHA || '').toLowerCase();
 
-    - name: Resolve possible conflicts ${{ github.event.client_payload.ReleaseBranchName }} with main
-      run: |
-        git config --global user.email "no-reply@github.com"
-        git config --global user.name "Actions service account"
-        git checkout ${{ github.event.client_payload.ReleaseBranchName }}-docs
-        git merge --no-edit --strategy-option=ours main
-        git push origin ${{ github.event.client_payload.ReleaseBranchName }}-docs
-        sleep 30
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed('Invalid pull request number.');
+              return;
+            }
+            if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
+              core.setFailed('ExpectedHeadSha must be an explicit full commit SHA.');
+              return;
+            }
 
-    - name: Approve pull request by GitHub-Actions bot
-      uses: actions/github-script@v8
-      with:
-        github-token: ${{secrets.PRAPPROVAL_SECRET}}
-        script: |
-          github.rest.pulls.createReview({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            pull_number: ${{ github.event.client_payload.PullRequestNumber }},
-            event: "APPROVE"
-          });
+            const response = await github.rest.pulls.get({owner, repo, pull_number: prNumber});
+            const pull = response.data;
+            if (pull.state !== 'open' || pull.base.ref !== 'main') {
+              core.setFailed('Pull request is not an open PR targeting main.');
+              return;
+            }
+            if (pull.head.sha.toLowerCase() !== expectedHead) {
+              core.setFailed('Pull request head moved; refusing stale merge request.');
+              return;
+            }
+            if (pull.mergeable !== true || pull.mergeable_state !== 'clean') {
+              core.setFailed(`Pull request is not cleanly mergeable: ${pull.mergeable_state}`);
+              return;
+            }
 
-    - name: Merge pull request for ${{ github.event.client_payload.ReleaseBranchName }}
-      uses: actions/github-script@v8
-      with:
-        github-token: ${{secrets.GITHUB_TOKEN}}
-        script: |
-          github.rest.pulls.merge({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            pull_number: ${{ github.event.client_payload.PullRequestNumber }},
-            merge_method: "squash"
-          })
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100
+            });
+            const approvedCurrentHead = reviews.some(review =>
+              review.state === 'APPROVED' &&
+              review.commit_id === pull.head.sha &&
+              review.user &&
+              review.user.type !== 'Bot'
+            );
+            if (!approvedCurrentHead) {
+              core.setFailed('A non-bot approval on the current head SHA is required.');
+              return;
+            }
+
+            const checks = await github.paginate(github.rest.checks.listForRef, {
+              owner,
+              repo,
+              ref: pull.head.sha,
+              per_page: 100
+            });
+            if (checks.length === 0) {
+              core.setFailed('No check runs found for current head; refusing merge.');
+              return;
+            }
+
+            const accepted = new Set(['success', 'neutral', 'skipped']);
+            const incomplete = checks.filter(check =>
+              check.status !== 'completed' || !accepted.has(check.conclusion)
+            );
+            if (incomplete.length > 0) {
+              core.setFailed(`Checks are not fully acceptable: ${incomplete.map(c => c.name).join(', ')}`);
+              return;
+            }
+
+            const merged = await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number: prNumber,
+              merge_method: 'squash',
+              sha: pull.head.sha
+            });
+            if (!merged.data.merged) {
+              core.setFailed(`GitHub refused merge: ${merged.data.message}`);
+              return;
+            }
+            core.info(`Merged pull request ${prNumber} at ${pull.head.sha}.`);
