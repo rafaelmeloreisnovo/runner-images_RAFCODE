@@ -20,10 +20,14 @@ permissions:
 
 jobs:
   compile-and-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Compile generic core as freestanding C
         shell: bash
@@ -34,7 +38,8 @@ jobs:
             -std=c11 \
             -ffreestanding \
             -fno-builtin \
-            -Wall -Wextra -Werror -pedantic \
+            -fno-common \
+            -Wall -Wextra -Werror -Wshadow -Wconversion -Wstrict-prototypes -Wcast-align -pedantic \
             -I rafcode/freestanding/include \
             -c rafcode/freestanding/src/raf_legacy_core.c \
             -o /tmp/rafcode/raf_legacy_core.host.o
@@ -45,7 +50,8 @@ jobs:
           set -euo pipefail
           clang \
             -std=c11 \
-            -Wall -Wextra -Werror -pedantic \
+            -fno-common \
+            -Wall -Wextra -Werror -Wshadow -Wconversion -Wstrict-prototypes -Wcast-align -pedantic \
             -I rafcode/freestanding/include \
             rafcode/freestanding/src/raf_legacy_core.c \
             rafcode/freestanding/tests/hosted_smoke.c \
@@ -62,8 +68,9 @@ jobs:
             -std=c11 \
             -ffreestanding \
             -fno-builtin \
+            -fno-common \
             -nostdlibinc \
-            -Wall -Wextra -Werror -pedantic \
+            -Wall -Wextra -Werror -Wshadow -Wconversion -Wstrict-prototypes -Wcast-align -pedantic \
             -I rafcode/freestanding/include \
             -c rafcode/freestanding/src/raf_legacy_core.c \
             -o /tmp/rafcode/raf_legacy_core.armv7.o
@@ -77,8 +84,9 @@ jobs:
             -std=c11 \
             -ffreestanding \
             -fno-builtin \
+            -fno-common \
             -nostdlibinc \
-            -Wall -Wextra -Werror -pedantic \
+            -Wall -Wextra -Werror -Wshadow -Wconversion -Wstrict-prototypes -Wcast-align -pedantic \
             -I rafcode/freestanding/include \
             -c rafcode/freestanding/src/raf_legacy_core.c \
             -o /tmp/rafcode/raf_legacy_core.aarch64.o
