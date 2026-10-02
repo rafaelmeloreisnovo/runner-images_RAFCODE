@@ -4,18 +4,84 @@ on:
   repository_dispatch:
     types: [create-github-release]
 
+permissions:
+  contents: write
 
 jobs:
-  Create_GitHub_release:
-    runs-on: ubuntu-latest
-
+  create-github-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-    - name: Create release for ${{ github.event.client_payload.ReleaseBranchName }}
-      uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b #v1.20.0
-      with:
-        tag: ${{ github.event.client_payload.ReleaseBranchName }}
-        name: ${{ github.event.client_payload.ReleaseTitle }}
-        body: ${{ github.event.client_payload.ReleaseBody }}
-        prerelease: ${{ github.event.client_payload.Prerelease }}
-        commit: ${{ github.event.client_payload.Commitish }}
-        allowUpdates: true
+      - name: Validate dispatch and create/update release through GitHub API
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_TAG: ${{ github.event.client_payload.ReleaseBranchName }}
+          RELEASE_TITLE: ${{ github.event.client_payload.ReleaseTitle }}
+          RELEASE_BODY: ${{ github.event.client_payload.ReleaseBody }}
+          RELEASE_PRERELEASE: ${{ github.event.client_payload.Prerelease }}
+          RELEASE_COMMITISH: ${{ github.event.client_payload.Commitish }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = process.env.RELEASE_TAG || '';
+            const title = process.env.RELEASE_TITLE || '';
+            const body = process.env.RELEASE_BODY || '';
+            const commitish = process.env.RELEASE_COMMITISH || '';
+            const prereleaseRaw = (process.env.RELEASE_PRERELEASE || '').toLowerCase();
+
+            function validRefName(value) {
+              return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(value) &&
+                !value.includes('..') &&
+                !value.includes('//') &&
+                !value.includes('@{') &&
+                !value.endsWith('.') &&
+                !value.endsWith('/') &&
+                !value.endsWith('.lock');
+            }
+
+            if (!validRefName(tag) || !validRefName(commitish)) {
+              core.setFailed('Invalid release tag or commitish.');
+              return;
+            }
+            if (title.length === 0 || title.length > 256 || body.length > 125000) {
+              core.setFailed('Invalid release title/body size.');
+              return;
+            }
+            if (prereleaseRaw !== 'true' && prereleaseRaw !== 'false') {
+              core.setFailed('Prerelease must be explicitly true or false.');
+              return;
+            }
+            const prerelease = prereleaseRaw === 'true';
+
+            await github.rest.repos.getCommit({owner, repo, ref: commitish});
+
+            try {
+              const current = await github.rest.repos.getReleaseByTag({owner, repo, tag});
+              const updated = await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: current.data.id,
+                tag_name: tag,
+                target_commitish: commitish,
+                name: title,
+                body,
+                prerelease,
+                draft: false
+              });
+              core.info(`Updated release: ${updated.data.html_url}`);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              const created = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                target_commitish: commitish,
+                name: title,
+                body,
+                prerelease,
+                draft: false
+              });
+              core.info(`Created release: ${created.data.html_url}`);
+            }

@@ -4,25 +4,51 @@ on:
   repository_dispatch:
     types: [update-github-release]
 
+permissions:
+  contents: write
 
 jobs:
-  Update_GitHub_release:
-    runs-on: ubuntu-slim
-
+  update-github-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-    - name: Update release for ${{ github.event.client_payload.ReleaseBranchName }}
-      uses: actions/github-script@v8
-      with:
-        github-token: ${{secrets.GITHUB_TOKEN}}
-        script: |
-            const response = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: "${{ github.event.client_payload.ReleaseBranchName }}"
+      - name: Validate dispatch and update release through GitHub API
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_TAG: ${{ github.event.client_payload.ReleaseBranchName }}
+          RELEASE_PRERELEASE: ${{ github.event.client_payload.Prerelease }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = process.env.RELEASE_TAG || '';
+            const prereleaseRaw = (process.env.RELEASE_PRERELEASE || '').toLowerCase();
+
+            function validRefName(value) {
+              return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(value) &&
+                !value.includes('..') &&
+                !value.includes('//') &&
+                !value.includes('@{') &&
+                !value.endsWith('.') &&
+                !value.endsWith('/') &&
+                !value.endsWith('.lock');
+            }
+
+            if (!validRefName(tag)) {
+              core.setFailed('Invalid release tag.');
+              return;
+            }
+            if (prereleaseRaw !== 'true' && prereleaseRaw !== 'false') {
+              core.setFailed('Prerelease must be explicitly true or false.');
+              return;
+            }
+
+            const current = await github.rest.repos.getReleaseByTag({owner, repo, tag});
+            const updated = await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: current.data.id,
+              prerelease: prereleaseRaw === 'true'
             });
-            github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: response.data.id,
-              prerelease: ${{ github.event.client_payload.Prerelease }}
-            });
+            core.info(`Updated release: ${updated.data.html_url}`);

@@ -17,4 +17,5 @@ jobs:
     uses: ./.github/workflows/trigger-ubuntu-win-build.yml
     with:
       image_type: 'windows11-vs2026-arm64'
-    secrets: inherit
+    secrets:
+      CI_PR_TOKEN: ${{ secrets.CI_PR_TOKEN }}
